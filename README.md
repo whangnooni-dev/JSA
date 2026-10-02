@@ -11,8 +11,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 의존성 설치 및 가상환경 생성 (.venv)
 uv sync
 
-# 실행
-uv run main.py
+# 개발 서버 실행 (자동 리로드) — http://127.0.0.1:8000, API 문서: /docs
+uv run fastapi dev main.py
+
+# 프로덕션 실행
+uv run fastapi run main.py
 ```
 
 ## 자주 쓰는 명령

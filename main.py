@@ -1,6 +1,13 @@
-def main():
-    print("Hello from jsa!")
+from fastapi import FastAPI
+
+app = FastAPI(title="JSA")
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/")
+def read_root():
+    return {"message": "Hello from jsa!"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
