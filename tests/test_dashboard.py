@@ -54,9 +54,11 @@ def fake_reader(ticker):
 
 
 @pytest.fixture(autouse=True)
-def fake_fdr(monkeypatch):
+def fake_fdr(monkeypatch, tmp_path):
     st.cache_data.clear()
     monkeypatch.setattr(data.fdr, "SnapDataReader", fake_reader)
+    monkeypatch.setattr(data, "SNAPSHOT_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(data, "OFFLINE", False)
     yield
     st.cache_data.clear()
 
@@ -73,9 +75,63 @@ def test_load_indicators_orders_by_category_and_drops_bad_entry():
 
 
 def test_load_series_coerces_numeric():
-    df = data.load_series("ECOS/SNAP/517-1")
-    assert df["가계신용"].dtype == float
-    assert df["가계신용"].iloc[-1] == 1862.0
+    result = data.load_series("ECOS/SNAP/517-1")
+    assert result.source == "live"
+    assert result.data["가계신용"].dtype == float
+    assert result.data["가계신용"].iloc[-1] == 1862.0
+
+
+def blocked(ticker):
+    if ticker == "ECOS/SNAP/LIST":
+        return LISTING.copy()  # 목록은 라이브러리에 내장되어 네트워크가 필요 없다
+    raise ConnectionError("Tunnel connection failed: 403 Forbidden")
+
+
+def test_live_fetch_saves_snapshot_used_when_blocked(monkeypatch):
+    live = data.load_series("ECOS/SNAP/523")
+    assert data.snapshot_path("ECOS/SNAP/523").exists()
+
+    monkeypatch.setattr(data.fdr, "SnapDataReader", blocked)
+    result = data.load_series("ECOS/SNAP/523")
+    assert result.source == "snapshot"
+    assert "403 Forbidden" in result.error
+    assert abs((result.saved_at - live.saved_at).total_seconds()) < 5
+    pd.testing.assert_frame_equal(result.data, live.data, check_freq=False)
+
+
+def test_snapshot_keeps_saved_at_independent_of_file_mtime():
+    from datetime import datetime
+
+    data.save_snapshot("ECOS/SNAP/523", rates(), saved_at=datetime(2025, 6, 13, 9, 30))
+    _, saved_at = data.read_snapshot("ECOS/SNAP/523")
+    assert saved_at == datetime(2025, 6, 13, 9, 30)
+
+
+def test_no_live_and_no_snapshot_raises(monkeypatch):
+    monkeypatch.setattr(data.fdr, "SnapDataReader", blocked)
+    with pytest.raises(data.DataUnavailable, match="403"):
+        data.load_series("ECOS/SNAP/523")
+
+
+def test_offline_mode_skips_network(monkeypatch):
+    data.save_snapshot("ECOS/SNAP/523", rates())
+    calls = []
+    monkeypatch.setattr(data.fdr, "SnapDataReader", lambda t: calls.append(t))
+    monkeypatch.setattr(data, "OFFLINE", True)
+    assert data.load_series("ECOS/SNAP/523").source == "snapshot"
+    assert calls == []
+
+
+def test_fetch_times_out(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr(data.fdr, "SnapDataReader", lambda t: release.wait(5))
+    try:
+        with pytest.raises(TimeoutError):
+            data.fetch_live("ECOS/SNAP/523", timeout=0.2)
+    finally:
+        release.set()
 
 
 def test_transform_fill_carries_value_into_range():
@@ -130,11 +186,28 @@ def test_app_switches_indicator_and_options():
     assert not at.exception
 
 
-def test_app_shows_error_when_fetch_fails(monkeypatch):
-    def failing(ticker):
-        raise ConnectionError("blocked")
-
-    monkeypatch.setattr(data.fdr, "SnapDataReader", failing)
+def test_app_uses_snapshot_with_warning_when_blocked(monkeypatch):
+    data.save_snapshot("ECOS/SNAP/523", rates())
+    monkeypatch.setattr(data.fdr, "SnapDataReader", blocked)
     at = run_app()
     assert not at.exception
-    assert "지표 목록을 불러오지 못했습니다" in at.error[0].value
+    assert "저장본" in at.warning[0].value
+    assert at.metric[0].value == "2.5"
+
+
+def test_app_explains_how_to_get_data_when_nothing_available(monkeypatch):
+    monkeypatch.setattr(data.fdr, "SnapDataReader", blocked)
+    at = run_app()
+    assert not at.exception
+    assert "저장본도 없습니다" in at.error[0].value
+    assert "dashboard.refresh" in at.info[0].value
+
+
+def test_refresh_saves_all_and_reports_failures(monkeypatch, capsys):
+    from dashboard import refresh
+
+    assert refresh.main() == 1  # 가짜 목록의 1198, 9999는 데이터가 없어 실패
+    assert data.snapshot_path("ECOS/SNAP/523").exists()
+    assert data.snapshot_path("ECOS/SNAP/517-1").exists()
+    out = capsys.readouterr().out
+    assert "2개 저장, 2개 실패" in out

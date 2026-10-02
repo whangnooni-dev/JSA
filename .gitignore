@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# 저장본 쓰기 중 임시 파일
+data/snapshots/*.tmp

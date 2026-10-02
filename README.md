@@ -37,10 +37,33 @@ uv run streamlit run dashboard/app.py
 - 차트 위에서 기간(1·3·5·10년·전체), 주기(원자료·월별·분기별·연별), 결측값 채우기, 지표별 차트 분리를 고릅니다.
 - 지표별 최신값과 직전 관측값 대비 변화를 카드로 보여 줍니다.
 - Plotly 차트에서 마우스를 올리면 날짜별 값을 보여 줍니다. 아래 데이터 표에서 CSV로 내려받을 수 있습니다.
-- 데이터는 1시간 동안 캐시합니다.
+- 데이터는 1시간 동안 캐시합니다. 사이드바의 **데이터 새로고침**으로 즉시 다시 받을 수 있습니다.
 - FinanceDataReader 목록의 `교역조건지수`는 티커가 제조업 지표(1198)로 잘못 연결되어 있어 제외했습니다.
 
-코드: `dashboard/data.py`(데이터 조회·가공), `dashboard/app.py`(화면)
+코드: `dashboard/data.py`(데이터 조회·가공), `dashboard/app.py`(화면), `dashboard/refresh.py`(일괄 저장)
+
+### 한국은행 사이트에 접속이 안 될 때 (저장본)
+
+한국은행에서 받은 데이터는 `data/snapshots/<티커>.csv`에 자동 저장됩니다. 저장본 첫 줄에 수집 시각이 기록됩니다.
+접속에 실패하면 대시보드는 저장본을 대신 보여 주고, 수집 시각과 실패 사유를 경고로 표시합니다.
+FinanceDataReader에는 요청 타임아웃이 없어서, 응답이 없으면 20초 후 저장본으로 넘어가도록 했습니다.
+
+사내망이나 클라우드처럼 사이트가 막힌 환경에서 쓰려면, 접속되는 PC에서 전체 지표를 받아 커밋해 두면 됩니다.
+
+```bash
+uv run python -m dashboard.refresh     # 47개 지표를 모두 받아 data/snapshots/에 저장
+git add data/snapshots && git commit -m "Update BOK snapshots"
+```
+
+| 환경 변수 | 기본값 | 설명 |
+|---|---|---|
+| `JSA_OFFLINE` | (없음) | `1`이면 접속하지 않고 저장본만 사용 |
+| `JSA_FETCH_TIMEOUT` | `20` | 한국은행 응답 대기 시간(초) |
+| `JSA_SNAPSHOT_DIR` | `data/snapshots` | 저장본 위치 |
+
+cmd 예: `set JSA_OFFLINE=1` 후 `uv run streamlit run dashboard/app.py`
+
+`.streamlit/config.toml`에서 Streamlit 사용 통계 전송을 꺼 두었습니다(사내망에서 불필요한 외부 접속 방지).
 
 ## API (보류)
 

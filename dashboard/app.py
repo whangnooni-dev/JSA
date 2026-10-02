@@ -31,7 +31,7 @@ def load_indicators() -> list[data.Indicator]:
 
 
 @st.cache_data(ttl=3600, show_spinner="한국은행 데이터를 불러오는 중…")
-def load_series(ticker: str) -> pd.DataFrame:
+def load_series(ticker: str) -> data.SeriesResult:
     return data.load_series(ticker)
 
 
@@ -97,14 +97,31 @@ with st.sidebar:
     choices = [i for i in indicators if i.category == category]
     indicator = st.radio("지표", choices, format_func=lambda i: i.name)
     st.caption(f"티커: `{indicator.ticker}`")
+    if st.button("데이터 새로고침", help="캐시를 비우고 한국은행에서 다시 받습니다", width="stretch"):
+        load_series.clear()
 
 st.subheader(indicator.name)
 
 try:
-    raw = load_series(indicator.ticker)
+    result = load_series(indicator.ticker)
+except data.DataUnavailable as exc:
+    st.error(str(exc))
+    st.info(
+        "한국은행 사이트에 접속되는 PC에서 `uv run python -m dashboard.refresh`를 실행하면 "
+        "`data/snapshots/`에 저장본이 생겨, 접속이 막힌 환경에서도 볼 수 있습니다."
+    )
+    st.stop()
 except Exception as exc:
     st.error(f"한국은행 데이터를 불러오지 못했습니다: {exc}")
     st.stop()
+
+raw = result.data
+if result.source == "snapshot":
+    st.warning(
+        f"한국은행에 접속하지 못해 저장본({result.saved_at:%Y-%m-%d %H:%M} 수집)을 표시합니다. "
+        f"사유: {result.error}",
+        icon="⚠️",
+    )
 
 if raw.empty:
     st.warning("데이터가 없습니다.")
@@ -150,7 +167,8 @@ for col, item in zip(st.columns(max(len(latest), 1)), latest):
 
 st.plotly_chart(build_figure(df, colors, separate), use_container_width=True)
 st.caption(
-    f"{df.index.min():%Y-%m-%d} ~ {df.index.max():%Y-%m-%d} · {len(df):,}개 관측 · {SOURCE}"
+    f"{df.index.min():%Y-%m-%d} ~ {df.index.max():%Y-%m-%d} · {len(df):,}개 관측 · "
+    f"{'실시간' if result.source == 'live' else '저장본'} {result.saved_at:%Y-%m-%d %H:%M} 수집 · {SOURCE}"
 )
 
 with st.expander("데이터 표"):
