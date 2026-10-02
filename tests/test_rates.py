@@ -141,3 +141,33 @@ def test_stale_data_served_when_refresh_fails(monkeypatch):
     assert cache.get("X", lambda t: sample_snapshot()).shape == (7, 4)
     stale = cache.get("X", lambda t: (_ for _ in ()).throw(ConnectionError()))
     assert stale.shape == (7, 4)
+
+
+def test_fetch_snapshot_parses_bok_excel_export(monkeypatch):
+    """FinanceDataReader의 실제 엑셀 파싱 경로를 거친다 (openpyxl 의존성 확인용)."""
+    import io
+
+    import requests
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["주요 단기 시장금리"])
+    ws.append([])
+    ws.append([])
+    ws.append(["", *bok.SHORT_TERM_RATE_COLUMNS])
+    ws.append(["단위", "연%", "연%", "연%", "연%"])
+    ws.append(["주기", "일", "일", "일", "일"])
+    ws.append(["기간", "", "", "", ""])
+    ws.append(["2025-06-09", 2.5, 2.523, 2.58, 2.57])
+    ws.append(["2025-06-10", None, 2.458, 2.58, 2.56])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    class FakeResponse:
+        content = buf.getvalue()
+
+    monkeypatch.setattr(requests, "get", lambda url, *a, **kw: FakeResponse())
+    df = bok.fetch_snapshot(bok.SHORT_TERM_RATES_TICKER)
+    assert list(df.columns) == list(bok.SHORT_TERM_RATE_COLUMNS)
+    assert df.loc["2025-06-10", "콜금리(익일물)"] == 2.458
